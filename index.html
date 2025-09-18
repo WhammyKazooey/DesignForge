@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAD Software Experiment</title>
+<style>
+  body { margin:0; overflow:hidden; font-family:sans-serif; }
+  #landing, #cadApp { position:absolute; width:100%; height:100%; display:flex; justify-content:center; align-items:center; flex-direction:column; }
+  #landing { background:#f0f0f0; }
+  #landing h1 { margin-bottom:20px; }
+  button, select, input { padding:8px 12px; cursor:pointer; margin:4px; }
+  #toolbar { position:absolute; top:10px; left:10px; background: rgba(240,240,240,0.95); padding:10px; border-radius:8px; display:flex; flex-wrap:wrap; gap:10px; z-index:10; max-width:400px; }
+</style>
+</head>
+<body>
+
+<!-- Landing/Login Page -->
+<div id="landing">
+  <h1>Welcome to CAD Software Experiment</h1>
+  <p>Click Start to enter the CAD app.</p>
+  <button id="startBtn">Start</button>
+</div>
+
+<!-- CAD App -->
+<div id="cadApp" style="display:none;">
+  <div id="toolbar">
+    <button id="sketchMode">Enter Sketch Mode</button>
+    <button id="finishSketch">Finish Sketch</button>
+    <button id="extrude">Extrude</button>
+    <button id="revolve">Revolve</button>
+    <button id="clearScene">Clear Scene</button>
+    <label>Color: <input type="color" id="colorPicker" value="#ff0000"></label>
+    <button id="download">Export Design</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/exporters/GLTFExporter.js"></script>
+
+<script>
+// =======================
+// Landing Page
+// =======================
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  const password = "CAD123"; // optional password, remove or change as needed
+  const input = prompt("Enter password to continue:","");
+  if(input === password){
+    document.getElementById('landing').style.display = 'none';
+    document.getElementById('cadApp').style.display = 'block';
+    initCAD(); // initialize CAD app
+  } else {
+    alert("Incorrect password!");
+  }
+});
+
+// =======================
+// CAD App
+// =======================
+function initCAD(){
+  // Scene setup
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xf0f0f0);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(10,10,10);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.getElementById('cadApp').appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.1;
+
+  // Grid + lights
+  const grid = new THREE.GridHelper(50,50);
+  scene.add(grid);
+  const ambientLight = new THREE.AmbientLight(0xffffff,0.6); scene.add(ambientLight);
+  const dirLight = new THREE.DirectionalLight(0xffffff,0.8); dirLight.position.set(10,10,10); scene.add(dirLight);
+
+  const objects = [];
+  let sketches = [];
+  let sketchPoints = [];
+  let isSketching = false;
+  const colorInput = document.getElementById('colorPicker');
+
+  function snap(val){ return Math.round(val); }
+
+  // Raycaster for mouse -> XZ plane
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  function getMousePosition(event){
+    mouse.x = (event.clientX/window.innerWidth)*2-1;
+    mouse.y = -(event.clientY/window.innerHeight)*2+1;
+    raycaster.setFromCamera(mouse, camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0,1,0),0);
+    const point = new THREE.Vector3();
+    raycaster.ray.intersectPlane(plane, point);
+    point.x = snap(point.x); point.z = snap(point.z); point.y=0;
+    return point;
+  }
+
+  // Sketch mode
+  document.getElementById('sketchMode').addEventListener('click',()=>{
+    isSketching = true; sketchPoints=[];
+  });
+
+  // Finish sketch
+  document.getElementById('finishSketch').addEventListener('click',()=>{
+    if(sketchPoints.length<2){ alert("Draw at least 2 points!"); return; }
+    const shape = new THREE.Shape();
+    shape.moveTo(sketchPoints[0].x, sketchPoints[0].z);
+    for(let i=1;i<sketchPoints.length;i++) shape.lineTo(sketchPoints[i].x, sketchPoints[i].z);
+    shape.lineTo(sketchPoints[0].x, sketchPoints[0].z);
+    sketches.push({shape:shape, color:colorInput.value});
+    sketchPoints = []; isSketching = false;
+  });
+
+  // Extrude
+  document.getElementById('extrude').addEventListener('click',()=>{
+    let depth = parseFloat(prompt("Enter extrusion height:", "2"));
+    sketches.forEach(s=>{
+      const geo = new THREE.ExtrudeGeometry(s.shape,{depth:depth, bevelEnabled:false});
+      const mat = new THREE.MeshStandardMaterial({color:s.color});
+      const mesh = new THREE.Mesh(geo,mat);
+      mesh.position.y=0;
+      mesh.rotation.x=-Math.PI/2;
+      scene.add(mesh); objects.push(mesh);
+    });
+    sketches=[]; 
+  });
+
+  // Revolve
+  document.getElementById('revolve').addEventListener('click',()=>{
+    let segments = parseInt(prompt("Enter number of segments:", "32"));
+    sketches.forEach(s=>{
+      const points = s.shape.getPoints();
+      const vecs = points.map(p=>new THREE.Vector3(p.x,0,p.y));
+      const geo = new THREE.LatheGeometry(vecs, segments);
+      const mat = new THREE.MeshStandardMaterial({color:s.color});
+      const mesh = new THREE.Mesh(geo,mat);
+      scene.add(mesh); objects.push(mesh);
+    });
+    sketches=[];
+  });
+
+  // Clear scene
+  document.getElementById('clearScene').addEventListener('click',()=>{
+    objects.forEach(o=>scene.remove(o));
+    objects.length=0; sketches=[];
+  });
+
+  // Export
+  document.getElementById('download').addEventListener('click',()=>{
+    const exporter = new THREE.GLTFExporter();
+    exporter.parse(scene,(res)=>{
+      const blob = new Blob([JSON.stringify(res)],{type:'application/json'});
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download='design.glb';
+      link.click();
+    }, {binary:true});
+  });
+
+  // Add sketch points
+  window.addEventListener('mousedown',(e)=>{
+    if(!isSketching) return;
+    const p = getMousePosition(e);
+    sketchPoints.push(p);
+    const dotGeo = new THREE.SphereGeometry(0.1,8,8);
+    const dotMat = new THREE.MeshStandardMaterial({color:colorInput.value});
+    const dot = new THREE.Mesh(dotGeo,dotMat);
+    dot.position.copy(p);
+    scene.add(dot);
+  });
+
+  // Resize
+  window.addEventListener('resize',()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // Render loop
+  function animate(){
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene,camera);
+  }
+  animate();
+}
+</script>
+</body
+
